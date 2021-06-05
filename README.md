@@ -5,7 +5,14 @@ Split manufacturing challenge generator for ISPD 2011 benchmark (a variation of 
     make
 
 ## Usage
-    ./split-gen -design <design_name> -auxFile <aux_file> -rtFile <routing_solution_file> -layer -<split_layer> -outputRt <output_rt_file> -outputNets <output_nets_file> -outputKey <output_key_file> [-brokenNetsOnly] [-twoCutNetsOnly] [-floatingVpins] [-excludeNI]
+    ./split-gen -design <design_name> 
+                -auxFile <aux_file> 
+                -rtFile <routing_solution_file> 
+                -layer -<split_layer> 
+                -outputRt <output_rt_file> 
+                -outputNets <output_nets_file> 
+                -outputKey <output_key_file> 
+                [-brokenNetsOnly] [-twoCutNetsOnly] [-floatingVpins] [-excludeNI]
 
 The .aux file should contain a list of the .nodes, .nets, .wts, .pl, .scl, .shapes, and .route files for the benchmark. These files should all be located in the same directory as the aux file. 
 
