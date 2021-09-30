@@ -12,7 +12,7 @@ Split manufacturing challenge generator for ISPD 2011 benchmark (a variation of 
                 -outputRt <output_rt_file> 
                 -outputNets <output_nets_file> 
                 -outputKey <output_key_file> 
-                [-brokenNetsOnly] [-twoCutNetsOnly] [-floatingVpins] [-excludeNI]
+                [-brokenNetsOnly] [-twoCutNetsOnly] [-floatingVpins] [-excludeNI] [-obfuscate]
 
 The .aux file should contain a list of the .nodes, .nets, .wts, .pl, .scl, .shapes, and .route files for the benchmark. These files should all be located in the same directory as the aux file. 
 
@@ -32,7 +32,7 @@ This tool generates three files:
 3) a .key file which states the correspondence of the new nets and the original nets. Each line is in the format of "new_net_name : original_net_name". If two or more new nets correspond to the same original net, they are connected in the original design.
 
 
-There are four optional arguments that controls the split and output behaviors. All of them have a value of "false" if not specified. If specified, it will be set to "true".
+There are five optional arguments that controls the split and output behaviors, as well as a simple obfuscation option. All of them have a value of "false" if not specified. If specified, it will be set to "true".
 
 `-brokenNetsOnly`: only nets that are broken by the split will be shown in .rt and .nets files.
 
@@ -44,11 +44,15 @@ There are four optional arguments that controls the split and output behaviors. 
 
 We used options `-twoCutNetOnly` and `-excludeNI` in our research papers ([SplitMan TVLSI'19](https://ieeexplore.ieee.org/document/8789523) and [ObfusX ASP-DAC'21](https://ieeexplore.ieee.org/document/9371556)).
 
+**NEW!** `-obfuscate`: enable an obfuscation scheme after splitting. This is done by perturbing the X and Y locations of each via at the split level with a small Gaussian noise, where the standard deviation is 1% of the layout size in X and Y direction. The perturbation is done by rip-up and rerouting with A* search to ensure satisfaction of routing resources. If a perturbing move is not feasible due to routing resource limit, a maximum of 10 trials will be performed that move it to potentially different random locations. The order of applying perturbation to different vias is also shuffled at random. There will be an additional output rt file with suffix `.obfuscated.rt` that contains the obfuscated routing in public part. 
+
 The ISPD 2011 benchmarks in this format can be found at http://www.ispd.cc/contests/11/ispd2011_contest.html#head-designs.
 
 A description of the format of these files can be found at http://www.ispd.cc/contests/11/other_files/Benchmark_Format.pdf
 
 The format of rt file is the same as the output format in ISPD 2008 contest and the output format of global routing solvers like NCTU-GR 2.0. A description can be found at http://www.ispd.cc/contests/08/ispd08rc.html#head-form.
+
+ 
 
 ## Troubleshooting
 Problem 1: The program prints usage instead of running normally.
