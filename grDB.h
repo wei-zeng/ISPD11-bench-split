@@ -16,6 +16,7 @@
 
 #include "baseDB.h"
 #include "layoutDB.h"
+#include "graph.h"
 
 class Vpin {
 public:
@@ -39,7 +40,6 @@ public:
 struct ObfusOption {
 	int gnetID;
 	int d0, d1, axis;
-	double xCost, DiMO, gain;
 	int margin0, margin1, margin2;
 	Gnet newGnet;
 	bool operator>(const ObfusOption &other) const;
@@ -63,7 +63,7 @@ public:
 			_designName(designName), _numTilesX(layout._numTilesX), _numTilesY(
 					layout._numTilesY), _numLayers(layout._numLayers), _numGlobalNets(
 					0), _tileWidth(static_cast<int>(layout._cellWidth)), _tileHeight(
-					static_cast<int>(layout._cellHeight)) {
+					static_cast<int>(layout._cellHeight)), _dirty(false) {
 	}
 	bool operator==(const RoutingDB &other) {
 		return _gnets == other._gnets && _edges == other._edges
@@ -192,18 +192,64 @@ private:
 	vector<int> _numChildren;
 	vector<bool> _validWires;
 	vector<GlobalWire> _cleanWires;
+    bool _dirty;
+    bool checkChildren(Gnet &gnet, vector<int> &_numChildren,
+			vector<bool> &_validWires, double &wlReduced, int splitLayer,
+			double &wlReducedAboveSL,
+			unordered_set<Gcell, HashGcell3d> &remainingGnetVertices,
+			unordered_set<Gcell, HashGcell3d> &remainingGnetGrids, int curr,
+			const Vpin &vp);
 
 public:
 	void updateEdgeDemands();
+    std::tuple<vector<Vpin>, vector<int>, vector<int>, double, double> ripUpPin(
+			const Layout &layout, Vpin &vp, const int splitLayer);
+	std::tuple<double, vector<int>, vector<int>, int,
+			std::unordered_set<Gcell, HashGcell3d>> rerouteNet(
+			const Layout &layout, Vpin &vp,
+			const std::unordered_set<Gcell, HashGcell3d> &bannedPts,
+			const int zlLim, const int zuLim, const int maxMargin,
+			const bool singleMargin, const bool writeToDB,
+			const bool updateRoot);
+	std::tuple<double, vector<int>, vector<int>, int> rerouteNet(
+			const Layout &layout, const Vpin &vp1, const Vpin &vp2,
+			const int zlLim, const int zuLim, const int maxMargin,
+			const bool singgleMargin, const bool writeToDB);
+	void restoreNet(const int gnetID, const Gnet gnet,
+			const std::map<size_t, Edge> &cleanEdges,
+			const std::map<size_t, Via> &cleanVias, bool restoreCongestion);
 	int getTotalWL() const;
 	int getWlByNet(int gnetID) const;
 	int getTotalWLByDemand() const;
+    bool isDirty() const {
+		return _dirty;
+	}
+    void setDirty() {
+        _dirty = true;
+    }
 	vector<Vpin> getVpins(const Layout &layout, const int splitLayer,
 			const bool twoCutNetsOnly, bool includeFloatingVpins, bool excludeNI) const;
 private:
 	void createBlockage(const int xStart, const int yStart, const int xEnd,
 			const int yEnd, const int z, Layout &layout);
 
+// A-star:
+public:
+	Graph build_graph(const size_t gnetId,
+			const std::unordered_set<Gcell, HashGcell3d> &bannedPt,
+			const int xlLim, const int xuLim, const int ylLim, const int yuLim,
+			const int zlLim, const int zuLim) const;
+	unordered_set<Vertex> build_goals(const Vpin &vp, const int xlLim,
+			const int xuLim, const int ylLim, const int yuLim,
+			const int zlLim) const;
+
+	std::pair<double, vector<Vertex>> a_star(Graph &graph3D, const Vertex &s,
+			const unordered_set<Vertex> &goals) const;
+	std::pair<ObfusOption, bool> randomTraverse(const Layout &layout, int layer,
+			vector<Vpin> &vpins, size_t best_vpin, size_t maxTrials,
+			double stdevX, double stdevY, std::mt19937 &rng);
+    bool applyChange(const Layout &layout, int layer,
+			vector<Vpin> &vpins, size_t best_vpin, const ObfusOption &opt);
 };
 
 bool congestionEqual(const RoutingDB &db1, const RoutingDB &db2);

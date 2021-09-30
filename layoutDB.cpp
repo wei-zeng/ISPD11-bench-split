@@ -180,3 +180,10 @@ void Layout::addNodeBlock(const string &objName, const double width,
 	_nodes.push_back(nodeBlock);
 }
 
+double Layout::getSizeX() const {
+    return _cellWidth * _numTilesX;
+}
+
+double Layout::getSizeY() const {
+    return _cellHeight * _numTilesY;
+}

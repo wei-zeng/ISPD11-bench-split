@@ -409,45 +409,6 @@ void RoutingDB::initRoutingTree(Gnet &gnet) {
 		}
 		head++;
 	}
-#if 0
-    /* read through the wire vector and remove antenna wires in linear time */
-    _numChildren.assign( gnet._gWires.size(), 0 );
-    _offset.assign( gnet._gWires.size(), 0 );
-    _validWires.assign( gnet._gWires.size(), true );
-    for( size_t i = 1; i < gnet._gWires.size(); i++ )
-        _numChildren[gnet._gWires[i]._pWireId] ++;
-    for( size_t i = 0; i < gnet._gWires.size(); i++ ) {
-        if( _numChildren[i] == 0 && gnet._gWires[i]._realPinId == -1 ) {
-            /* antenna wire found */
-            int curr = i;
-            while( curr != -1 && _numChildren[curr] == 0 && gnet._gWires[curr]._realPinId == -1 && _validWires[curr] ) {
-                _validWires[curr] = false;
-                curr = gnet._gWires[curr]._pWireId;
-                if( curr != -1 )
-                    _numChildren[curr] --;
-            }
-        }
-    }
-    int currOffset = 0;
-    int curr = 0;
-    _cleanWires.resize( gnet._gWires.size() );
-    for( size_t i = 0; i < gnet._gWires.size(); i++ ) {
-    	if( _validWires[i] ) {
-            _cleanWires[curr] = gnet._gWires[i];
-            if( _cleanWires[curr]._pWireId != -1 ) {
-                _cleanWires[curr]._pWireId -= _offset[ _cleanWires[curr]._pWireId ];
-            }
-            curr ++;
-        }
-        else {
-            currOffset ++;
-        }
-        _offset[i] = currOffset;
-    }
-    assert( curr + currOffset == static_cast<int>(gnet._gWires.size()) );
-    _cleanWires.resize( curr );
-    gnet._gWires.swap( _cleanWires );
-#endif
 }
 
 // Update edge and via demands from info on _gWires
@@ -491,7 +452,468 @@ void RoutingDB::updateEdgeDemands() {
 		}
 	}
 }
+bool RoutingDB::checkChildren(Gnet &gnet, vector<int> &_numChildren,
+		vector<bool> &_validWires, double &wlReduced, int splitLayer,
+		double &wlReducedAboveSL,
+		unordered_set<Gcell, HashGcell3d> &remainingGnetVertices,
+		unordered_set<Gcell, HashGcell3d> &remainingGnetGrids, int curr,
+		const Vpin &vp) {
+	bool hasRemovedWires = false;
+	if (gnet._gWires[curr]._realPinId != -1) { // removed a pin..
+		gnet._gWires[curr]._pWireId = -1;
+		_validWires[curr] = true;
+		return hasRemovedWires;
+	}
+	if (_numChildren[curr] == 0)
+		return hasRemovedWires;
+	for (size_t j = 1; j < gnet._gWires.size(); j++) {
+		if (gnet._gWires[j]._pWireId == curr && _validWires[j]) {
+			if (min(gnet._gWires[curr]._z, gnet._gWires[j]._z) <= splitLayer
+					&& max(gnet._gWires[curr]._z, gnet._gWires[j]._z)
+							> splitLayer) { // removed a v-pin..
+				gnet._gWires[curr]._pWireId = -1;
+				_validWires[curr] = true;
+				return hasRemovedWires;
+			}
+		}
+	}
+	if (_numChildren[curr] == 1) {
+		for (size_t j = 1; j < gnet._gWires.size(); j++) {
+			if (gnet._gWires[j]._pWireId == curr && _validWires[j]) {
+				curr = j;
+				break;
+			}
+		}
+		//if (gnet._gWires[curr]._realPinId != -1) { // A is a pin
+		//	if (gnet._gWires[curr]._pWireId != -1) {
+		//		_numChildren[gnet._gWires[curr]._pWireId]--;
+		//		gnet._gWires[curr]._pWireId = -1;
+		//	}
+		//	return hasRemovedWires;
+		//}
+		_validWires[curr] = false;
+		hasRemovedWires = true;
+		GlobalWire &gWire = gnet._gWires[curr];
+		GlobalWire &pWire = gnet._gWires[gWire._pWireId];
+		//printf("Removing gWire %d(%d,%d,%d)-%d(%d,%d,%d)\n", curr, gWire._x,
+		//		gWire._y, gWire._z, gWire._pWireId, pWire._x, pWire._y,
+		//		pWire._z);
+		if (pWire._z == gWire._z) {
+			if (_dirLayers[pWire._z] == H) {
+				assert(gWire._y == pWire._y);
+				for (int x = min(gWire._x, pWire._x);
+						x < max(gWire._x, pWire._x); x++) {
+					//			printf("dem/cap=%d/%d, ",
+					//					_edges[findEdge( x, gWire._y, gWire._z )].demand(),
+					//					_edges[findEdge( x, gWire._y, gWire._z )].cap());
+					size_t edgeId = findEdge(x, gWire._y, gWire._z);
+					if (!(gnet.findCleanEdge(edgeId))) {
+						gnet.setCleanEdge(edgeId, _edges[edgeId]);
+					}
+					ripUpEdge(edgeId);
+					gnet.removeEdge(edgeId);
+					gnet._occupiedEdges.erase(edgeId);
+					_dirty = true;
+					//			printf("rm (%d,%d,%d)-(%d,%d,%d), dem/cap=%d/%d\n", x, gWire._y, gWire._z, x+1, gWire._y, gWire._z,
+					//					_edges[findEdge( x, gWire._y, gWire._z )].demand(),
+					//					_edges[findEdge( x, gWire._y, gWire._z )].cap());
+					wlReduced++;
+					if (gWire._z > splitLayer)
+						wlReducedAboveSL++;
+				}
+			} else if (_dirLayers[pWire._z] == V) {
+				assert(gWire._x == pWire._x);
+				for (int y = min(gWire._y, pWire._y);
+						y < max(gWire._y, pWire._y); y++) {
+					//				printf("dem/cap=%d/%d, ",
+					//						_edges[findEdge( gWire._x, y, gWire._z )].demand(),
+					//						_edges[findEdge( gWire._x, y, gWire._z )].cap());
+					size_t edgeId = findEdge(gWire._x, y, gWire._z);
+					if (!(gnet.findCleanEdge(edgeId))) {
+						gnet.setCleanEdge(edgeId, _edges[edgeId]);
+					}
+					ripUpEdge(edgeId);
+					gnet.removeEdge(edgeId);
+					gnet._occupiedEdges.erase(edgeId);
+					_dirty = true;
+					//					printf("rm (%d,%d,%d)-(%d,%d,%d), dem/cap=%d/%d\n", gWire._x, y, gWire._z, gWire._x, y+1, gWire._z,
+					//							_edges[findEdge( gWire._x, y, gWire._z )].demand(),
+					//							_edges[findEdge( gWire._x, y, gWire._z )].cap());
+					wlReduced++;
+					if (gWire._z > splitLayer)
+						wlReducedAboveSL++;
+				}
+			} else
+				assert(0);
+		} else {
+			assert(gWire._y == pWire._y);
+			assert(gWire._x == pWire._x);
+			for (int z = min(gWire._z, pWire._z); z < max(gWire._z, pWire._z);
+					z++) {
+				size_t viaId = findVia(gWire._x, gWire._y, z);
+				if (!(gnet.findCleanVia(viaId))) {
+					gnet.setCleanVia(viaId, _vias[viaId]);
+				}
+				ripUpVia(viaId);
+				gnet.removeVia(findVia(gWire._x, gWire._y, z));
+				gnet._occupiedVias.erase(viaId);
+				_dirty = true;
+				//					printf("rm (%d,%d,%d)-(%d,%d,%d)\n", gWire._x, gWire._y, z, gWire._x, gWire._y, z+1);
+				wlReduced++;
+				if (gWire._z > splitLayer && pWire._z > splitLayer)
+					wlReducedAboveSL++;
+			}
+		}
+		int tmp = gnet._gWires[curr]._pWireId;
+		if (tmp != -1)
+			_numChildren[tmp]--;
+		bool stop = false;
+		if (gnet._gWires[curr]._realPinId != -1) { // A is a pin
+			gnet._gWires[curr]._pWireId = -1;
+			_validWires[curr] = true;
+			stop = true;
+		} else { // check if A is a v-pin
+			for (size_t j = 0; j < gnet._gWires.size(); j++) {
+				if (gnet._gWires[j]._pWireId == curr && _validWires[j]) {
+					if (min(gnet._gWires[curr]._z, gnet._gWires[j]._z)
+							<= splitLayer
+							&& max(gnet._gWires[curr]._z, gnet._gWires[j]._z)
+									> splitLayer) { // ends at a v-pin
+						if (!(gnet._gWires[curr]._x == vp.xCoord
+								&& gnet._gWires[curr]._y == vp.yCoord)) { // which is not itself
+							_validWires[curr] = true;
+							if (gnet._gWires[curr]._pWireId != -1) {
+								gnet._gWires[curr]._pWireId = -1;
+							}
+							stop = true;
+						}
+					}
+					break;
+				}
+			}
+		}
+		if (!stop) {
+			// recursion
+			checkChildren(gnet, _numChildren, _validWires, wlReduced,
+					splitLayer, wlReducedAboveSL, remainingGnetVertices,
+					remainingGnetGrids, curr, vp);
+		}
+	}
+	return hasRemovedWires;
+}
+// Rip-up a pin
+std::tuple<vector<Vpin>, vector<int>, vector<int>, double, double> RoutingDB::ripUpPin(
+		const Layout &layout, Vpin &vp, const int splitLayer) // 0-based splitLayer
+		{
+// returns: (vpins, WL reduced)
+	using namespace boost;
+	vector<int> removedEdges;
+	vector<int> removedVias;
+	double wlReduced = 0;
+	double wlReducedAboveSL = 0;
+	Gnet &gnet = _gnets[vp.gnetID];
+	std::unordered_set<Gcell, HashGcell3d> remainingGnetVertices;
+	std::unordered_set<Gcell, HashGcell3d> remainingGnetGrids;
+//		for (int i = 0; i < static_cast<int>(gnet._gWires.size()); ++i) {
+//			GlobalWire & gWire = gnet._gWires[i];
+//			printf("<I> gWire[%d] (%d,%d,%d)/par=%d,pin=%d\n", i, gWire._x, gWire._y, gWire._z, gWire._pWireId, gWire._realPinId);
+//		}
 
+// Flag the wires to be removed
+// (1/2) Remove the vpin
+	_numChildren.assign(gnet._gWires.size(), 0);
+	_offset.assign(gnet._gWires.size(), 0);
+	_validWires.assign(gnet._gWires.size(), true);
+	for (size_t i = 1; i < gnet._gWires.size(); i++)
+		_numChildren[gnet._gWires[i]._pWireId]++;
+	size_t i;
+	for (i = 0; i < gnet._gWires.size(); ++i) {
+		auto &gWire = gnet._gWires[i];
+		if (gWire._pWireId == -1)
+			continue;
+		auto &pWire = gnet._gWires[gWire._pWireId];
+
+		if (min(gWire._z, pWire._z) == vp.zCoord
+				&& max(gWire._z, pWire._z) == vp.zCoord + 1
+				&& (gWire._z < pWire._z ? gWire._x : pWire._x) == vp.xCoord
+				&& (gWire._z < pWire._z ? gWire._y : pWire._y) == vp.yCoord)
+			break;
+	}
+	if (i >= gnet._gWires.size()) {
+		_gnets[vp.gnetID].printGnet();
+		assert(0);
+	}
+
+	_validWires[i] = false;
+	GlobalWire &gWire = gnet._gWires[i];
+	GlobalWire &pWire = gnet._gWires[gWire._pWireId];
+	//		printf("Removing gWire (%d,%d,%d)-(%d,%d,%d)\n", gWire._x, gWire._y, gWire._z,
+	//				pWire._x, pWire._y, pWire._z);
+	wlReduced++;
+	assert(gWire._y == pWire._y);
+	assert(gWire._x == pWire._x);
+	for (int z = min(gWire._z, pWire._z); z < max(gWire._z, pWire._z); z++) {
+		size_t viaId = findVia(gWire._x, gWire._y, z);
+		if (!(gnet.findCleanVia(viaId))) {
+			gnet.setCleanVia(viaId, _vias[viaId]);
+		}
+		ripUpVia(viaId);
+		gnet.removeVia(viaId);
+		gnet._occupiedVias.erase(viaId);
+		_dirty = true;
+		//	printf("rm (%d,%d,%d)-(%d,%d,%d)\n", gWire._x, gWire._y, z, gWire._x, gWire._y, z+1);
+	}
+
+	// reduce its parent's children count
+	int curr = gnet._gWires[i]._pWireId;
+	if (curr != -1)
+		_numChildren[curr]--;
+
+	// if it has only one child node A, and A is not a pin OR the matching v-pin,
+	// then remove node A and continue to check A's child(ren)
+	checkChildren(gnet, _numChildren, _validWires, wlReduced, splitLayer,
+			wlReducedAboveSL, remainingGnetVertices, remainingGnetGrids, i, vp);
+	// for (size_t i = 1; i < gnet._gWires.size(); i++)
+	//	if (gnet._gWires[i]._pWireId != -1
+	//			&& !_validWires[gnet._gWires[i]._pWireId])
+	//		gnet._gWires[i]._pWireId = -1;
+// (2/2) Remove antenna wires beyond the (two) connected components of pins (incl. L1 and L4).
+	while (true) {
+		bool hasRemovedWires = false;
+		for (size_t i = 0; i < gnet._gWires.size(); i++) {
+			if (_numChildren[i] == 0 && gnet._gWires[i]._realPinId == -1) {
+				/* antenna wire found */
+				int curr = i;
+				// no child nodes
+				while (curr != -1 && _numChildren[curr] == 0
+						&& gnet._gWires[curr]._realPinId == -1
+						&& !(min(gnet._gWires[curr]._z,
+								gnet._gWires[gnet._gWires[curr]._pWireId]._z)
+								<= splitLayer
+								&& max(gnet._gWires[curr]._z,
+										gnet._gWires[gnet._gWires[curr]._pWireId]._z)
+										> splitLayer) && _validWires[curr]) {
+					_validWires[curr] = false;
+					hasRemovedWires = true;
+					GlobalWire &gWire = gnet._gWires[curr];
+					GlobalWire &pWire = gnet._gWires[gWire._pWireId];
+					//printf("Removing gWire %d(%d,%d,%d)-%d(%d,%d,%d)\n", curr,
+					//		gWire._x, gWire._y, gWire._z, gWire._pWireId,
+					//		pWire._x, pWire._y, pWire._z);
+					//cout << flush;
+					if (pWire._z == gWire._z) {
+						if (_dirLayers[pWire._z] == H) {
+							assert(gWire._y == pWire._y);
+							for (int x = min(gWire._x, pWire._x);
+									x < max(gWire._x, pWire._x); x++) {
+								size_t edgeId = findEdge(x, gWire._y, gWire._z);
+								if (!(gnet.findCleanEdge(edgeId))) {
+									gnet.setCleanEdge(edgeId, _edges[edgeId]);
+								}
+								ripUpEdge(edgeId);
+								gnet.removeEdge(edgeId);
+								gnet._occupiedEdges.erase(edgeId);
+								_dirty = true;
+								//     			printf("rma (%d,%d,%d)-(%d,%d,%d)\n", x, gWire._y, gWire._z, x+1, gWire._y, gWire._z);
+								wlReduced++;
+								if (gWire._z > splitLayer)
+									wlReducedAboveSL++;
+							}
+						} else if (_dirLayers[pWire._z] == V) {
+							assert(gWire._x == pWire._x);
+							for (int y = min(gWire._y, pWire._y);
+									y < max(gWire._y, pWire._y); y++) {
+								size_t edgeId = findEdge(gWire._x, y, gWire._z);
+								if (!(gnet.findCleanEdge(edgeId))) {
+									gnet.setCleanEdge(edgeId, _edges[edgeId]);
+								}
+								ripUpEdge(edgeId);
+								gnet.removeEdge(edgeId);
+								gnet._occupiedEdges.erase(edgeId);
+								_dirty = true;
+								//       			printf("rma (%d,%d,%d)-(%d,%d,%d)\n", gWire._x, y, gWire._z, gWire._x, y+1, gWire._z);
+								wlReduced++;
+								if (gWire._z > splitLayer)
+									wlReducedAboveSL++;
+							}
+						} else
+							assert(0);
+					} else {
+						if (gWire._y != pWire._y)
+							gnet.printGnet();
+						assert(gWire._y == pWire._y);
+						assert(gWire._x == pWire._x);
+						for (int z = min(gWire._z, pWire._z);
+								z < max(gWire._z, pWire._z); z++) {
+							size_t viaId = findVia(gWire._x, gWire._y, z);
+							if (!(gnet.findCleanVia(viaId))) {
+								gnet.setCleanVia(viaId, _vias[viaId]);
+							}
+							ripUpVia(viaId);
+							gnet.removeVia(findVia(gWire._x, gWire._y, z));
+							gnet._occupiedVias.erase(viaId);
+							_dirty = true;
+							//         		printf("rma (%d,%d,%d)-(%d,%d,%d)\n", gWire._x, gWire._y, z, gWire._x, gWire._y, z+1);
+							wlReduced++;
+							if (gWire._z > splitLayer && pWire._z > splitLayer)
+								wlReducedAboveSL++;
+						}
+					}
+					curr = gnet._gWires[curr]._pWireId;
+					if (curr != -1)
+						_numChildren[curr]--;
+				}
+			}
+		}
+		for (size_t i = 0; i < gnet._gWires.size(); i++)
+			if (!_validWires[i]) {
+				auto res = checkChildren(gnet, _numChildren, _validWires,
+						wlReduced, splitLayer, wlReducedAboveSL,
+						remainingGnetVertices, remainingGnetGrids, i, vp);
+				hasRemovedWires = hasRemovedWires || res;
+			}
+		// cout << "hasRemovedWires: " << hasRemovedWires << endl;
+		if (!hasRemovedWires)
+			break;
+	}
+	// For a removed gWire with two or more children (like this: ->.<-)
+	// add it to GnetVertices and its corresponding connections to GnetGrids.
+	for (int i = 0; i < static_cast<int>(gnet._gWires.size()); i++) {
+		if (!_validWires[i] && _numChildren[i] >= 2) {
+			auto &gWire2 = gnet._gWires[i];
+			remainingGnetVertices.insert(
+					Gcell(gWire2._x, gWire2._y, gWire2._z));
+			remainingGnetGrids.insert(Gcell(gWire2._x, gWire2._y, gWire2._z));
+			// fill grids with wires connecting gWire to each children
+			for (int j = 0; j < static_cast<int>(gnet._gWires.size()); j++) {
+				if (_validWires[j] && gnet._gWires[j]._pWireId == i) { // it is a valid child of gWire
+					int x1 = gWire2._x;
+					int y1 = gWire2._y;
+					int z1 = gWire2._z;
+					int x2 = gnet._gWires[j]._x;
+					int y2 = gnet._gWires[j]._y;
+					int z2 = gnet._gWires[j]._z;
+					if (x1 != x2) {
+						assert(y1 == y2);
+						assert(z1 == z2);
+						for (int x = min(x1, x2); x <= max(x1, x2); ++x) {
+							remainingGnetGrids.insert(Gcell(x, y1, z1));
+						}
+					} else if (y1 != y2) {
+						assert(x1 == x2);
+						assert(z1 == z2);
+						for (int y = min(y1, y2); y <= max(y1, y2); ++y) {
+							remainingGnetGrids.insert(Gcell(x1, y, z1));
+						}
+					} else if (z1 != z2) {
+						assert(x1 == x2);
+						assert(y1 == y2);
+						for (int z = min(z1, z2); z <= max(z1, z2); ++z) {
+							remainingGnetGrids.insert(Gcell(x1, y1, z));
+						}
+					}
+				}
+			}
+		}
+	}
+	for (size_t i = 1; i < gnet._gWires.size(); i++)
+		if (gnet._gWires[i]._pWireId != -1
+				&& !_validWires[gnet._gWires[i]._pWireId])
+			gnet._gWires[i]._pWireId = -1;
+// Do the real removing
+	int currOffset = 0;
+	curr = 0;
+	_cleanWires.resize(gnet._gWires.size());
+	for (size_t i = 0; i < gnet._gWires.size(); i++) {
+		if (_validWires[i]) {
+			_cleanWires[curr] = gnet._gWires[i];
+			curr++;
+		} else {
+			currOffset++;
+		}
+		_offset[i] = currOffset;
+	}
+	_cleanWires.resize(curr);
+	for (size_t i = 0; i < _cleanWires.size(); i++) {
+		if (_cleanWires[i]._pWireId != -1) {
+			_cleanWires[i]._pWireId -= _offset[_cleanWires[i]._pWireId];
+		}
+	}
+	assert(curr + currOffset == static_cast<int>(gnet._gWires.size()));
+	_cleanWires.resize(curr);
+	gnet._gWires.swap(_cleanWires);
+// cout << "Removed " << currOffset << " gWires." << endl;
+
+	for (size_t i = 0; i < gnet._gWires.size(); i++) {
+		const GlobalWire &gWire = gnet._gWires[i];
+		remainingGnetVertices.insert(Gcell(gWire._x, gWire._y, gWire._z));
+		remainingGnetGrids.insert(Gcell(gWire._x, gWire._y, gWire._z));
+		if (gWire._pWireId >= 0) {
+			const GlobalWire &pWire = gnet._gWires[gWire._pWireId];
+			remainingGnetVertices.insert(Gcell(pWire._x, pWire._y, pWire._z));
+			int x1 = gWire._x;
+			int y1 = gWire._y;
+			int z1 = gWire._z;
+			int x2 = pWire._x;
+			int y2 = pWire._y;
+			int z2 = pWire._z;
+			if (x1 != x2) {
+				assert(y1 == y2);
+				assert(z1 == z2);
+				for (int x = min(x1, x2); x <= max(x1, x2); ++x) {
+					remainingGnetGrids.insert(Gcell(x, y1, z1));
+				}
+			} else if (y1 != y2) {
+				assert(x1 == x2);
+				assert(z1 == z2);
+				for (int y = min(y1, y2); y <= max(y1, y2); ++y) {
+					remainingGnetGrids.insert(Gcell(x1, y, z1));
+				}
+			} else if (z1 != z2) {
+				assert(x1 == x2);
+				assert(y1 == y2);
+				for (int z = min(z1, z2); z <= max(z1, z2); ++z) {
+					remainingGnetGrids.insert(Gcell(x1, y1, z));
+				}
+			}
+		}
+	}
+	// For each vp, take intersection of (gwire grids) AND
+	// (grids in connected component of the vp)
+	int reducedWL = 0;
+	std::unordered_set<Gcell, HashGcell3d> resultGnetGrids;
+	std::unordered_set<Gcell, HashGcell3d> resultGnetVertices;
+	for (auto &gv : vp.gnetGrids)
+		if (remainingGnetGrids.find(gv) != remainingGnetGrids.end())
+			resultGnetGrids.insert(gv);
+	vp.gnetGrids.swap(resultGnetGrids);
+	for (auto &gv : vp.gnetVertices)
+		if (remainingGnetVertices.find(gv) != remainingGnetVertices.end())
+			resultGnetVertices.insert(gv);
+	vp.gnetVertices.swap(resultGnetVertices);
+	int originalwlToL1 = vp.wlToL1;
+	vp.wlToL1 = vp.gnetGrids.size() - 1;
+	reducedWL += originalwlToL1 - vp.wlToL1;
+	assert(reducedWL == wlReduced - wlReducedAboveSL);
+	return make_tuple(vector<Vpin>(), removedEdges, removedVias, wlReduced,
+			wlReducedAboveSL);
+}
+
+void RoutingDB::restoreNet(const int gnetID, const Gnet gn,
+		const std::map<size_t, Edge> &cleanEdges,
+		const std::map<size_t, Via> &cleanVias, bool restoreCongestion) {
+	Gnet &gnet = _gnets[gnetID];
+	if (restoreCongestion) {
+		for (auto item : cleanEdges) {
+			_edges[item.first] = item.second;
+		}
+		for (auto item : cleanVias) {
+			_vias[item.first] = item.second;
+		}
+	}
+	gnet = gn;
+	_dirty = false;
+}
 // Create routing blockage and store info in layout data structure
 void RoutingDB::createBlockage(const int xStart, const int yStart,
 		const int xEnd, const int yEnd, const int z, Layout &layout) {

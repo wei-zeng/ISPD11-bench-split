@@ -43,6 +43,7 @@ private:
 	void exportRoute(Layout &layout);
 	void exportNet(Layout &layout, double netsPercent);
 	void exportAux(Layout &layout);
+	void exportRt(Layout &layout, RoutingDB &routingDB);
 
 	string _nodesFile;
 	string _netsFile;

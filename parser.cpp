@@ -48,24 +48,6 @@ void Parser::ReadAux(const string auxFile) {
 	inp.close();
 }
 
-/*void Parser::WriteDEF(const LayoutDR &layout, const RoutingDB_DR &routingDB, const char *defFile) {
-	WriteDEF(layout, routingDB, string(defFile));
-}
-
-void Parser::WriteDEF(const LayoutDR &layout, const RoutingDB_DR &routingDB, const string defFile) {
-	_defwtr.write_def(layout._ldp.def_, routingDB, defFile);
-}
-
-void Parser::ReadLEFDEF(LayoutDR &layout, const char *lefFile,
-		const char *defFile) {
-	ReadLEFDEF(layout, string(lefFile), string(defFile));
-}
-
-void Parser::ReadLEFDEF(LayoutDR &layout, const string lefFile,
-		const string defFile) {
-	layout.readLEFDEF(lefFile, defFile);
-}
-*/
 void Parser::ReadNode(Layout &layout) {
 	ifstream inp(_nodesFile);
 	if (!inp.is_open())
@@ -89,58 +71,6 @@ void Parser::ReadNode(Layout &layout) {
 	}
 	printf("<I> %-20s : %u\n", "# Nodes", unsigned(layout._nodes.size()));
 }
-/*
-void Parser::ReadNode(LayoutDR &layout) {
-	auto &ldp = layout._ldp;
-	string objName;
-	double width, height, llx, lly;
-	string layer;
-	int orient;
-	for (auto comp : ldp.def_.get_component_umap()) {
-		objName = comp.second->name_;
-		switch (comp.second->orient_) {
-		case 0: // N
-		case 2: // S
-		case 4: // FN
-		case 6: // FS
-			width = comp.second->lef_macro_->size_x_;
-			height = comp.second->lef_macro_->size_y_;
-			break;
-		case 1: // W
-		case 3: // E
-		case 5: // FW
-		case 7: // FE
-			width = comp.second->lef_macro_->size_y_;
-			height = comp.second->lef_macro_->size_x_;
-			break;
-		}
-		llx = comp.second->x_;
-		lly = comp.second->y_;
-		layer = "metal1";
-		orient = comp.second->orient_;
-		Node node(objName, width, height, llx, lly, layer, orient);
-		layout._nodes.push_back(node);
-		layout._nodeUmap.insert(make_pair(objName, layout._numRegularNodes));
-		++layout._numRegularNodes;
-	}
-	for (auto pin : ldp.def_.get_pin_umap()) {
-		objName = pin.second->name_;
-		width = pin.second->ux_ - pin.second->ly_;
-		height = pin.second->uy_ - pin.second->ly_;
-		llx = pin.second->lx_;
-		lly = pin.second->ly_;
-		layer = pin.second->layer_;
-		orient = pin.second->orient_;
-		Node node(objName, width, height, llx, lly, layer, orient);
-		layout._nodes.push_back(node);
-		layout._nodeUmap.insert(
-				make_pair(objName,
-						layout._numRegularNodes + layout._numPTerms));
-		++layout._numPTerms;
-	}
-	printf("<I> %-20s : %u\n", "# Nodes", unsigned(layout._nodes.size()));
-}
-*/
 void Parser::ReadPlace(Layout &layout) {
 	ifstream inp(_plFile);
 	if (!inp.is_open())
@@ -186,26 +116,7 @@ void Parser::ReadNet(Layout &layout) {
 	}
 	printf("<I> %-20s : %u\n", "# Nets", unsigned(layout._nets.size()));
 }
-/*
-void Parser::ReadNet(LayoutDR &layout) {
-	auto &ldp = layout._ldp;
-	unsigned numNets = ldp.def_.get_net_umap().size();
-	unsigned numPins = 0;
-	unsigned cntNet = 0;
 
-	layout._nets.resize(numNets);
-	for (auto net : ldp.def_.get_net_umap()) {
-		numPins += net.second->connections_.size();
-		layout._nets[cntNet].setName(net.second->name_);
-		for (unsigned i = 0; i < net.second->connections_.size(); i++) {
-			layout.addNetPin(net.second->connections_[i], layout._nets[cntNet]);
-		}
-		cntNet++;
-	}
-	cout << "# Nets: " << numNets << endl;
-	cout << "# Pins: " << numPins << endl;
-}
-*/
 void Parser::ReadShape(Layout &layout) {
 	ifstream inp(_shapesFile);
 	if (!inp.is_open())
@@ -305,16 +216,7 @@ void Parser::ReadRouteConfig(Layout &layout) {
 		layout._nodes[nodeId].setBlockedLayers(line);
 	}
 }
-/*
-void Parser::ReadRouteConfig(LayoutDR &layout, size_t ub_z) {
-	layout.setGrid(ub_z);
-	layout.setVCaps();
-	layout.setHCaps();
-	layout.setMinWireWidth();
-	layout.setMinWireSpacing();
-	layout.setViaSpacing();
-}
-*/
+
 // Create files for new designs modified in this program
 void Parser::exportDesign(Layout &layout, double netsPercent) {
 	exportNodes(layout);
@@ -322,6 +224,7 @@ void Parser::exportDesign(Layout &layout, double netsPercent) {
 	exportRoute(layout);
 	exportNet(layout, netsPercent);
 	exportAux(layout);
+    //exportRt(layout, routingDB);
 }
 
 // Export .node file
@@ -471,4 +374,11 @@ void Parser::exportAux(Layout &layout) {
 			<< ".modified.route\n";
 
 	ofs.close();
+}
+
+// Export .rt file
+void Parser::exportRt(Layout &layout, RoutingDB &routingDB) {
+    char outfile[80];
+    sprintf(outfile, "%s.modified.rt", layout.name().c_str());
+    routingDB.writeGlobalWires(layout, outfile);
 }

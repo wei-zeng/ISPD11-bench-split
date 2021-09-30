@@ -22,6 +22,8 @@
 #include <string>
 #include "parser.h"
 #include <map>
+#include <algorithm>
+#include <numeric>
 
 int main(int argc, char **argv) {
 	char *designName = nullptr;
@@ -36,6 +38,7 @@ int main(int argc, char **argv) {
     bool twoCutNetsOnly = false;
 	bool floatingNets = false; // include floating nets (not connected to any pin)
 	bool excludeNI = false; // exclude FIXED_NI terminals ("p" nodes in .nodes files) in vpins
+    bool obfuscate = false; // enable random obfuscation 
 	// Read input arguments
 	while (i < argc) {
 		if (!strcmp(argv[i], "-design")) {
@@ -79,15 +82,18 @@ int main(int argc, char **argv) {
         } else if (!strcmp(argv[i], "-excludeNI")) {
             i++;
             excludeNI = true;
+        } else if (!strcmp(argv[i], "-obfuscate")) {
+            i++;
+            obfuscate = true;
 		} else {
-			cerr << "Usage : " << argv[0] << " -design <design_name> -layer <split_layer> -auxFile <aux_file> -rtFile <rt_file> -outputRt <output_rt_file> -outputNets <output_nets_file> -outputKey <output_key_file> [-brokenNetsOnly] [-twoCutNetsOnly] [-floatingNets] [-excludeNI]" << endl;
+			cerr << "Usage : " << argv[0] << " -design <design_name> -layer <split_layer> -auxFile <aux_file> -rtFile <rt_file> -outputRt <output_rt_file> -outputNets <output_nets_file> -outputKey <output_key_file> [-brokenNetsOnly] [-twoCutNetsOnly] [-floatingNets] [-excludeNI] [-obfuscate]" << endl;
 			exit(1);
 		}
 	}
 
 	if (!designName || !auxFile || !rtFile || layer == 0 ||
             !outputRtFile || !outputNetsFile || !outputKeyFile) {
-		cerr << "Usage : " << argv[0] << " -design <design_name> -layer <split_layer> -auxFile <aux_file> -rtFile <rt_file> -outputRt <output_rt_file> -outputNets <output_nets_file> -outputKey <output_key_file> [-brokenNetsOnly] [-twoCutNetsOnly] [-floatingNets] [-excludeNI]" << endl;
+		cerr << "Usage : " << argv[0] << " -design <design_name> -layer <split_layer> -auxFile <aux_file> -rtFile <rt_file> -outputRt <output_rt_file> -outputNets <output_nets_file> -outputKey <output_key_file> [-brokenNetsOnly] [-twoCutNetsOnly] [-floatingNets] [-excludeNI] [-obfuscate]" << endl;
 		exit(1);
 	}
 
@@ -113,14 +119,11 @@ int main(int argc, char **argv) {
 
 // Read routing file
 		if (rtFile) {
-
 			routingDB.readGlobalWires(layout, rtFile);
-
 			routingDB.initRoutingTreeForAllGnets();
-
 			routingDB.updateEdgeDemands();
-
 			auto vpins = routingDB.getVpins(layout, layer - 1, twoCutNetsOnly, floatingNets, excludeNI);
+
 			std::unordered_map<Gcell, size_t, HashGcell3d> uMapVpin;
 			for (size_t i = 0; i < vpins.size(); i++) {
 				auto &vp = vpins[i];
@@ -147,6 +150,45 @@ int main(int argc, char **argv) {
             if (outputKeyFile) {
 				routingDB.writeKey(layout, outputKeyFile, vpins);            
             }
+            
+            if (obfuscate) {
+                cout << "Start obfuscation, which may take a long time ..." << endl;
+                int pass = 0, fail = 0;
+                mt19937 gen;
+                size_t maxTrials = 10;
+                double stdevX = 0.01 * layout.getSizeX();
+                double stdevY = 0.01 * layout.getSizeY();
+                vector<size_t> randperm(vpins.size());
+                iota(randperm.begin(), randperm.end(), 0);
+                auto rng = mt19937{};
+                shuffle(randperm.begin(), randperm.end(), rng);
+                int i = 0;
+                for (auto idx : randperm) {
+                    cout << i << " / " << vpins.size() << endl;
+                    i++;
+                    auto res = routingDB.randomTraverse(layout, layer, vpins, idx, maxTrials, stdevX, stdevY, gen);
+                    if (res.second) {
+                        bool ret = routingDB.applyChange(layout, layer, vpins, idx, res.first);
+                        assert(ret);
+                        pass++;
+                    } else {
+                        fail++;
+                    }
+                }
+                cout << "Vpin changed: " << pass << ", Not changed: " << fail << endl;
+            }
+			if (outputRtFile) {
+                char obfusRtFile[100];
+                sscanf(obfusRtFile, "%s.obfuscated.rt", outputRtFile);
+				cout << "Writing obfuscated rtFile" << endl;
+                size_t netCount = 0;
+                if (!brokenNetsOnly) 
+				    netCount = routingDB.writeGlobalWires(layout, obfusRtFile, excludedGnetIds);
+                for (size_t i = 0; i < vpins.size(); i++) {
+                    auto &vp = vpins[i];
+                    routingDB.writeGlobalWiresVpin(layout, obfusRtFile, vp, netCount);
+                }
+			}
 		} // if (rtFile)
     } // if (auxFile)
     return 0;

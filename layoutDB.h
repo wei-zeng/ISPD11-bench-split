@@ -55,6 +55,8 @@ public:
 	void setBlkPorosity(const string &line);
 	double getCellWidth() {return _cellWidth;}
 	double getCellHeight() {return _cellHeight;}
+    double getSizeX() const;
+    double getSizeY() const;
 
 	//  modifier
 	void addNodeBlock(const string &objName, const double width,

@@ -13,8 +13,6 @@
 
 using namespace std;
 
-constexpr int extValue[10] = { 70, 70, 70, 140, 140, 140, 400, 400, 800, 800 };
-
 enum RoutingDir {
 	V, H, NA
 };
@@ -85,7 +83,7 @@ public:
 		return (_lx <= other._ux && _ux >= other._lx && _ly <= other._uy
 				&& _uy >= other._ly);
 	}
-	int viaWeights[9] = { 300, 320, 320, 600, 600, 600, 1680, 1680, 3360 };
+	int viaWeights[9] = { 1, 1, 1, 1, 1, 1, 1, 1, 1 };
 	int viaWeightedDist(const Gcell &other) const {
 		int dist = abs(_x - other._x) + abs(_y - other._y);
 		for (int z = min(_z, other._z); z < max(_z, other._z); z++)
