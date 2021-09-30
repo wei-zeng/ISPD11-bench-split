@@ -124,11 +124,6 @@ int main(int argc, char **argv) {
 			routingDB.updateEdgeDemands();
 			auto vpins = routingDB.getVpins(layout, layer - 1, twoCutNetsOnly, floatingNets, excludeNI);
 
-			std::unordered_map<Gcell, size_t, HashGcell3d> uMapVpin;
-			for (size_t i = 0; i < vpins.size(); i++) {
-				auto &vp = vpins[i];
-				uMapVpin[Gcell(vp.gnetID, vp.xCoord, vp.yCoord)] = i;
-			}
             unordered_set<size_t> excludedGnetIds;
 			for (size_t i = 0; i < vpins.size(); i++) {
 				auto &vp = vpins[i];
@@ -177,9 +172,10 @@ int main(int argc, char **argv) {
                 }
                 cout << "Vpin changed: " << pass << ", Not changed: " << fail << endl;
             }
+			vpins = routingDB.getVpins(layout, layer - 1, twoCutNetsOnly, floatingNets, excludeNI);
 			if (outputRtFile) {
                 char obfusRtFile[100];
-                sscanf(obfusRtFile, "%s.obfuscated.rt", outputRtFile);
+                sprintf(obfusRtFile, "%s.obfuscated.rt", outputRtFile);
 				cout << "Writing obfuscated rtFile" << endl;
                 size_t netCount = 0;
                 if (!brokenNetsOnly) 
